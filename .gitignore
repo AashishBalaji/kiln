@@ -7,3 +7,4 @@ tmp/
 artifactory/var/
 kernel-patch/linux-sparse/
 *.tar.gz
+.gitlab-ci-local/

@@ -161,3 +161,110 @@ directly and verified (`bitbake -p`; `bitbake cjson-native`) -- they are
 real, correct job definitions, not placeholders, but re-executing them
 through Docker a second time in this disk-constrained sandbox was not
 attempted, for the same disk-budget reason documented above.
+
+## `patch-stack/` — carried-patch drift detection against real upstream tags (added later)
+
+This project's kernel patch (above) proves it applies today. The
+`patch-stack/` tool (internal name: Warden) answers a different, real
+question: **if the kernel base moves, which carried patches silently
+stop applying?** It re-runs the same `git apply --check` logic this
+project already used for the single patch, but against an *ordered
+stack* of patches and *several* real upstream tags, and stops a
+patch's series at the first break (quilt's own semantics) rather than
+testing later patches against a file state that was never produced.
+
+### The real research behind it (not fabricated)
+
+1. Shallow-fetched 5 real kernel tags (`v5.15`, `v6.1`, `v6.6`,
+   `v6.12`, `v6.17`) from `https://github.com/torvalds/linux.git`,
+   scoped to `sound/soc/codecs/` only (56MB total for all 5 — cheap,
+   because the fetch is shallow and the checkout sparse-cones to one
+   directory).
+2. Extracted the real `tlv320aic31xx.c` content at each tag and
+   diffed them directly. Two real upstream changes were found between
+   v5.15 and v6.1: `aic31xx_i2c_probe()` dropped its `const struct
+   i2c_device_id *id` parameter, and the regulator-supply-request
+   error path was refactored from an `if (ret) { if (ret !=
+   -EPROBE_DEFER) dev_err(...); return ret; }` block into a single
+   `dev_err_probe()` call.
+3. This project's existing kernel patch (`0001`, the
+   `aic31xx_power_on()` reset-error fix) was checked against all 5
+   real tags: it applies cleanly on every one, because its 3-line
+   context window never touched the refactored block — genuinely
+   good news about that patch's robustness, not a result picked for
+   the story.
+4. A second, new patch (`0002`) was written against the
+   regulator-defer block *as it reads on v5.15* — a real, defensible
+   fix (trace the `EPROBE_DEFER` path with `dev_dbg` for board
+   bring-up visibility), not engineered to fail. Tested for real
+   against all 5 tags: applies cleanly on v5.15, genuinely fails
+   (`git apply --check` reports `patch does not apply` at the real
+   line) on v6.1 and every tag after, because upstream really did
+   rewrite that block.
+
+This is the real data in `patch-stack/series.yaml`,
+`patch-stack/patches/`, and
+`patch-stack/tests/test_warden.py::test_real_upstream_v5_15_is_healthy`
+/ `test_real_upstream_v6_1_has_genuine_drift` — not hand-written
+fixtures standing in for a real result.
+
+### Real bugs found and fixed while building the tool
+
+1. **Relative-path bug in `warden/cli.py`**: `series_dir =
+   args.series.parent / "patches"` stayed relative, so when
+   `warden/core.py` ran `git apply` with `cwd=workdir` (the temp
+   clone), the patch path resolved against the clone directory
+   instead of the project directory — every real run failed with "No
+   such file or directory" until `.resolve()` was added.
+2. **Missing `git` binary in `python:3.12-slim`** inside the GitLab
+   CI container: both the `test-patch-stack` job's local-repo fixture
+   and the `drift-check` job shell out to a real `git` binary (that's
+   the actual mechanism being tested), and the slim image doesn't
+   ship one.
+3. **This sandbox's apt sources (`deb.debian.org`) are not reachable
+   through its egress allowlist**, even with `--network host` and
+   the proxy variables that fixed `pip install` elsewhere in this
+   project — DNS resolution for `deb.debian.org` fails outright
+   inside the container. Fixed by switching the affected jobs' base
+   image to `cimg/python:3.12` (pulled from Docker Hub the same way
+   this project pulled `postgres:15-alpine` and the Artifactory image
+   — image pulls go through a different, broader path than
+   `apt-get`), which already bundles `git`.
+4. **`git clone` over HTTPS inside the container failed TLS
+   verification** even after the image swap, same root cause as this
+   project's earlier `pip install` TLS issue. Fixed with
+   `gitlab-ci-local`'s own `--ca-file /root/.ccr/ca-bundle.crt` flag
+   — a verification-time flag only, never baked into `.gitlab-ci.yml`.
+
+### Real GitLab CI verification
+
+All of `lint-patch-stack`, `test-patch-stack`, and `drift-check` were
+run for real inside real Docker containers:
+
+```
+gitlab-ci-local --network host \
+  --variable HTTPS_PROXY="$HTTPS_PROXY" --variable HTTP_PROXY="$HTTP_PROXY" \
+  --ca-file /root/.ccr/ca-bundle.crt \
+  lint-patch-stack test-patch-stack drift-check
+```
+
+Results: lint clean; 3/3 non-integration tests passed; `drift-check`
+ran a real clone of `torvalds/linux` at all 5 real tags inside the
+container and reported **1/5 tags healthy** (v5.15 only) — identical
+to running the tool directly in this sandbox's shell, now reproduced
+inside Docker. The job "fails" (`gitlab-ci-local` reports `FAIL 1`)
+because `warden.cli` exits non-zero when it finds drift — that is the
+gate working correctly, not a broken pipeline, which is why the job
+is gated `when: manual` rather than failing every push.
+
+### What this honestly proves, and what it doesn't
+
+It proves, with a real example, that a patch which looks fine in
+isolation can silently stop applying the moment the kernel base
+moves — and that checking regularly (per tag, in CI) catches it
+before someone finds out the hard way during an actual kernel bump.
+It does not attempt a 3-way merge or automatic rebase (`git apply
+-3` needs real blob SHAs in a patch's `index` line to reconstruct a
+merge base, which these hand-written patches don't carry) — it tells
+you *that* a patch broke and exactly *where*, not how to fix it
+automatically. That's a natural next step, not a gap hidden here.

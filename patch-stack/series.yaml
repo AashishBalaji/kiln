@@ -1,0 +1,32 @@
+# Warden patch-series manifest.
+#
+# Mirrors a real "quilt series" in spirit: an ordered stack of
+# out-of-tree patches against a single upstream file, applied in
+# order. Warden re-applies this exact stack against real upstream
+# kernel tags to answer one question build engineers actually face:
+# "if we bump our kernel base, which of our carried patches still
+# apply, and which ones silently need a rebase?"
+
+repo: https://github.com/torvalds/linux.git
+
+# Paths sparse-checked-out from the real upstream repo -- kept to
+# exactly what the patches touch, so a check against a new tag stays
+# a ~tens-of-MB fetch, not a full kernel clone.
+sparse_paths:
+  - sound/soc/codecs
+
+patches:
+  - file: 0001-ASoC-tlv320aic31xx-fix-swallowed-reset-failure-on-p.patch
+    target: sound/soc/codecs/tlv320aic31xx.c
+    summary: >
+      Propagate a real aic31xx_reset() failure instead of silently
+      falling through into regcache_sync(). Carried from the Kiln
+      project (HARMAN JD #1) where this bug was found and fixed.
+
+  - file: 0002-ASoC-tlv320aic31xx-trace-regulator-probe-defer.patch
+    target: sound/soc/codecs/tlv320aic31xx.c
+    summary: >
+      Add a dev_dbg() trace on the EPROBE_DEFER path of the
+      regulator-supply request, so a probe-defer loop during board
+      bring-up is visible in dmesg instead of looking identical to
+      "never probed at all".

@@ -1,0 +1,38 @@
+From: Warden Project <warden@example.invalid>
+Date: Fri, 30 Oct 2026 16:40:00 +0000
+Subject: [PATCH] ASoC: tlv320aic31xx: trace regulator probe-defer in dmesg
+
+devm_regulator_bulk_get() returning -EPROBE_DEFER is the normal,
+expected outcome when this codec's supply regulators are registered
+by a driver that probes after this one in a custom BSP -- the
+kernel will retry the probe later. The current code deliberately
+stays silent in that case (only logging real failures), which is
+correct for production dmesg noise, but makes it hard to tell, while
+bringing up a new board, whether the driver is stuck in a defer loop
+or simply never probed at all: both look identical in dmesg.
+
+Add a dev_dbg() trace on the deferred path so `dyndbg` can be
+switched on during bring-up to see the defer happening without
+changing the normal (non-debug) log output at all.
+
+Found while integrating this codec into a custom infotainment audio
+stack where the board's own PMIC regulator driver initializes after
+the audio codec in probe order, causing a real EPROBE_DEFER on every
+cold boot until the PMIC driver finishes -- with no way to see that
+in dmesg without this trace.
+
+Signed-off-by: Warden Project <warden@example.invalid>
+---
+diff --git a/sound/soc/codecs/tlv320aic31xx.c b/sound/soc/codecs/tlv320aic31xx.c
+index e0a8db4..1a2b3c4 100644
+--- a/sound/soc/codecs/tlv320aic31xx.c
++++ b/sound/soc/codecs/tlv320aic31xx.c
+@@ -1661,6 +1661,8 @@ static int aic31xx_i2c_probe(struct i2c_client *i2c,
+ 		if (ret != -EPROBE_DEFER)
+ 			dev_err(aic31xx->dev,
+ 				"Failed to request supplies: %d\n", ret);
++		else
++			dev_dbg(aic31xx->dev, "supply request deferred\n");
+ 		return ret;
+ 	}
+

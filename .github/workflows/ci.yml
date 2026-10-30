@@ -57,3 +57,43 @@ jobs:
         run: |
           git -C /tmp/linux-sparse apply --check \
             "$GITHUB_WORKSPACE/meta-infotainment/recipes-kernel/linux/linux-yocto/0001-ASoC-tlv320aic31xx-fix-swallowed-reset-failure-on-p.patch"
+
+  lint-patch-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install flake8
+      - run: flake8 --max-line-length=100 patch-stack/warden/ patch-stack/tests/
+
+  test-patch-stack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest pyyaml
+      - run: cd patch-stack && python3 -m pytest -v -m "not integration"
+
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - name: re-check the carried patch stack against real upstream tags
+        run: |
+          cd patch-stack
+          python3 -m warden.cli matrix --tags v5.15,v6.1,v6.6,v6.12,v6.17
+        # Expected to report drift (exit 1) on this project's own
+        # series as committed today -- patch 0002 genuinely needs a
+        # rebase from v6.1 onward (see docs/validation-notes.md).
+        # That is the tool correctly doing its job, not a broken
+        # pipeline, so this step is allowed to "fail" without failing
+        # the whole workflow.
+        continue-on-error: true

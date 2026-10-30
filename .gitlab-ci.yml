@@ -1,23 +1,34 @@
-# GitLab CI pipeline for the "Kiln" embedded-Linux build project.
+# GitLab CI pipeline for "Kiln" -- an embedded-Linux build-engineering
+# project covering Yocto layers/recipes, third-party library and
+# driver integration, build-failure triage, a carried kernel patch
+# stack with drift detection against real upstream tags, GitLab
+# CI/CD, and JFrog Artifactory. Built against HARMAN's Associate
+# Engineer -- Gitlab CI/CD JD (R-56518-2026, Bangalore).
 #
 # Verification note (see docs/validation-notes.md for the full story):
 # this pipeline was verified for real with `gitlab-ci-local` (a tool
 # that runs .gitlab-ci.yml jobs locally via Docker, no GitLab.com
 # project needed -- the user's explicit choice over pushing to a real
-# GitLab.com account). The `lint` and `test` stage jobs below were run
-# for real that way. The `yocto-parse` and `yocto-build-cjson-native`
-# jobs are real, correct job definitions -- their exact shell command
-# sequences are the same ones already run directly and verified in this
-# project (bitbake -p; bitbake cjson-native) -- but were not re-run
-# inside gitlab-ci-local, because doing so means cloning Poky and
-# building the native toolchain bootstrap a second time inside a fresh
-# Docker container, which this sandbox's remaining disk budget (already
-# spent proving those builds once) cannot safely absorb twice. They are
-# gated `when: manual` for that reason, stated here rather than hidden.
+# GitLab.com account). The `lint` and `test` stage jobs, and
+# `drift-check`, were run for real that way -- `drift-check` needed
+# `--network host`, `--variable HTTPS_PROXY=...`, and `--ca-file` to
+# let git inside the container trust this sandbox's own TLS proxy;
+# none of that is baked into this file, since a real GitLab Runner
+# has no such proxy in the way. The `yocto-parse` and
+# `yocto-build-cjson-native` jobs are real, correct job definitions --
+# their exact shell command sequences are the same ones already run
+# directly and verified in this project (bitbake -p; bitbake
+# cjson-native) -- but were not re-run inside gitlab-ci-local, because
+# doing so means cloning Poky and building the native toolchain
+# bootstrap a second time inside a fresh Docker container, which this
+# sandbox's remaining disk budget (already spent proving those builds
+# once) cannot safely absorb twice. They are gated `when: manual` for
+# that reason, stated here rather than hidden.
 
 stages:
   - lint
   - test
+  - drift-check
   - yocto
   - publish
 
@@ -42,12 +53,46 @@ lint-recipes:
     # the fast, no-Yocto-toolchain-needed check that belongs in `lint`.
     - python3 ci/check_recipes.py
 
+lint-patch-stack:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - pip install --quiet flake8
+    - flake8 --max-line-length=100 patch-stack/warden/ patch-stack/tests/
+
 test-triage-tool:
   stage: test
   image: python:3.12-slim
   script:
     - pip install --quiet pytest
     - cd triage-tool && python3 -m pytest -v
+
+test-patch-stack:
+  stage: test
+  # No network needed here, but the local-repo fixture shells out to
+  # a real `git` binary -- python:3.12-slim doesn't ship one, and
+  # this sandbox's apt sources can't be reached to install it (see
+  # docs/validation-notes.md), so this uses a Docker Hub image that
+  # already bundles git instead of fighting that.
+  image: cimg/python:3.12
+  script:
+    - pip install --quiet pytest pyyaml
+    - cd patch-stack && python3 -m pytest -v -m "not integration"
+
+# Real network: clones the real upstream kernel at real tags and
+# re-checks the real 2-patch stack against each. This is the point of
+# the patch-stack tool, so it isn't mocked -- but kept `when: manual`
+# since a drifted patch is an expected, informative finding (this
+# project's own stack is currently drifted from v6.1 onward -- see
+# docs/validation-notes.md), not something that should silently fail
+# every push.
+drift-check:
+  stage: drift-check
+  image: cimg/python:3.12
+  when: manual
+  script:
+    - pip install --quiet pyyaml
+    - cd patch-stack && python3 -m warden.cli matrix --tags v5.15,v6.1,v6.6,v6.12,v6.17
 
 yocto-parse:
   stage: yocto
