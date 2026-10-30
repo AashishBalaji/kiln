@@ -1,0 +1,11 @@
+[Unit]
+Description=Audio Zone Manager (infotainment audio zone control daemon)
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/audio-zone-manager /etc/audio-zone-manager/zones.json
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

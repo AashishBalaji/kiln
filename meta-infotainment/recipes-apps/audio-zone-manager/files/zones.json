@@ -1,0 +1,7 @@
+{
+  "zones": [
+    { "name": "front", "default_volume": 60, "muted": false },
+    { "name": "rear", "default_volume": 40, "muted": false },
+    { "name": "trunk", "default_volume": 0, "muted": true }
+  ]
+}

@@ -1,0 +1,40 @@
+From: Kiln Project <kiln@example.invalid>
+Date: Fri, 30 Oct 2026 15:08:14 +0000
+Subject: [PATCH] ASoC: tlv320aic31xx: fix swallowed reset failure on power-on
+
+aic31xx_power_on() logs an error if aic31xx_reset() fails but then
+falls through into regcache_sync() anyway, which overwrites `ret`.
+A reset failure is therefore never actually reported to the caller,
+the regulators are never disabled, and the regmap cache is never put
+back into cache-only mode -- the device is left in a half-initialized
+state that the rest of the driver assumes is fully reset.
+
+Mirror the cleanup already done a few lines below for a
+regcache_sync() failure: put the regmap back into cache-only mode,
+disable the bulk regulators, and propagate the real error code.
+
+Found while integrating this codec into a custom infotainment audio
+stack and tracing a power-on retry that silently kept using a
+half-reset device after an injected I2C NACK on the reset write.
+
+Signed-off-by: Kiln Project <kiln@example.invalid>
+---
+diff --git a/sound/soc/codecs/tlv320aic31xx.c b/sound/soc/codecs/tlv320aic31xx.c
+index e0a8db4..4763033 100644
+--- a/sound/soc/codecs/tlv320aic31xx.c
++++ b/sound/soc/codecs/tlv320aic31xx.c
+@@ -1281,8 +1281,13 @@ static int aic31xx_power_on(struct snd_soc_component *component)
+ 
+ 	/* Reset device registers for a consistent power-on like state */
+ 	ret = aic31xx_reset(aic31xx);
+-	if (ret < 0)
++	if (ret < 0) {
+ 		dev_err(aic31xx->dev, "Could not reset device: %d\n", ret);
++		regcache_cache_only(aic31xx->regmap, true);
++		regulator_bulk_disable(ARRAY_SIZE(aic31xx->supplies),
++				       aic31xx->supplies);
++		return ret;
++	}
+ 
+ 	ret = regcache_sync(aic31xx->regmap);
+ 	if (ret) {

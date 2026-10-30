@@ -1,0 +1,6 @@
+poky/
+kernel-patch/linux-sparse/
+*.pyc
+__pycache__/
+.pytest_cache/
+tmp/
