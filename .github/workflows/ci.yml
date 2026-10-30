@@ -1,0 +1,59 @@
+name: CI
+
+# Mirrors the lint/test stages of .gitlab-ci.yml (this project's primary
+# CI target, given the HARMAN JD's GitLab CI/CD focus). GitHub Actions
+# runs these same checks on every push/PR so the repo has working CI
+# out of the box for anyone browsing it on GitHub, without needing
+# gitlab-ci-local installed. The GitLab pipeline remains the one
+# verified via gitlab-ci-local -- see docs/validation-notes.md.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-recipes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 ci/check_recipes.py
+
+  lint-triage-tool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install flake8
+      - run: flake8 --max-line-length=100 triage-tool/bitbake_triage.py
+
+  test-triage-tool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - run: cd triage-tool && python3 -m pytest -v
+
+  verify-kernel-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: sparse-checkout the exact kernel file this patch touches
+        run: |
+          git clone --filter=blob:none --no-checkout --depth 1 \
+            https://github.com/torvalds/linux.git /tmp/linux-sparse
+          cd /tmp/linux-sparse
+          git sparse-checkout init --cone
+          git sparse-checkout set sound/soc/codecs
+          git checkout
+      - name: verify the real patch applies cleanly
+        run: |
+          git -C /tmp/linux-sparse apply --check \
+            "$GITHUB_WORKSPACE/meta-infotainment/recipes-kernel/linux/linux-yocto/0001-ASoC-tlv320aic31xx-fix-swallowed-reset-failure-on-p.patch"
