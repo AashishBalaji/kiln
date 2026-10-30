@@ -42,6 +42,16 @@ REAL_FILESPATH_ERROR = (
     "file could not be found\n"
 )
 
+# Real `git apply --check` failure text -- captured verbatim from the
+# patch-stack/warden drift check run against the real v6.1 kernel tag
+# (see patch-stack/docs findings in docs/validation-notes.md): patch
+# 0002 genuinely stopped applying once upstream refactored the
+# regulator-defer error path between v5.15 and v6.1.
+REAL_PATCH_STACK_DRIFT_ERROR = (
+    "error: patch failed: sound/soc/codecs/tlv320aic31xx.c:1661\n"
+    "error: sound/soc/codecs/tlv320aic31xx.c: patch does not apply\n"
+)
+
 # Standard, well-documented bitbake failure shapes that weren't
 # reproduced for real in this sandbox (noted above) -- not claimed as
 # captured output.
@@ -88,6 +98,13 @@ def test_real_filespath_error_is_fetch_category_with_filename():
     f = findings[0]
     assert f.category == Category.FETCH
     assert "0001-ASoC-tlv320aic31xx" in f.suggestion
+
+
+def test_real_patch_stack_drift_error_is_drift_category():
+    findings = triage(REAL_PATCH_STACK_DRIFT_ERROR)
+    assert len(findings) == 2  # both git-apply lines match, independently
+    assert all(f.category == Category.DRIFT for f in findings)
+    assert any("warden.cli" in f.suggestion for f in findings)
 
 
 def test_real_cjson_build_log_has_only_warnings_no_errors():

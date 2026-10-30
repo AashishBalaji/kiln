@@ -32,6 +32,7 @@ class Category(str, Enum):
     SANITY = "sanity_check"
     FETCH = "fetch"
     PATCH = "patch"
+    DRIFT = "patch_stack_drift"
     CONFIGURE = "configure"
     COMPILE = "compile"
     QA = "qa"
@@ -164,6 +165,29 @@ _RULES = [
             "patch against the actual fetched source "
             "(tmp/work/.../<recipe>/<pv>/<source dir>) with `git diff` or "
             "`quilt refresh`, don't hand-edit the hunk offsets."
+        ),
+    ),
+    (
+        # git apply's own failure format (used by patch-stack/warden when
+        # re-checking a carried patch against a real upstream kernel tag)
+        # -- distinct from bitbake's own do_patch/quilt-style messages
+        # matched above, which never say "patch failed:" this way.
+        re.compile(
+            r"error: patch failed: (?P<file>[\w./+-]+):(?P<line>\d+)|"
+            r"error: (?P<file2>[\w./+-]+): patch does not apply"
+        ),
+        Category.DRIFT,
+        "error",
+        lambda m: (
+            "a carried patch no longer applies against this source tree "
+            "-- this is `git apply`'s own failure format, not bitbake's "
+            "do_patch/quilt format. This almost always means the real "
+            "upstream file changed around the patch's context lines "
+            "since it was written, not a bad patch. Re-check it with "
+            "`git apply --check` against the current source, or run "
+            "`python3 -m warden.cli matrix --tags <old>,<new>` (in "
+            "patch-stack/) to see exactly which upstream tag introduced "
+            "the drift."
         ),
     ),
     (

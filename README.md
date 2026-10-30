@@ -61,9 +61,11 @@ artifactory/                README + notes on the real local JFrog
 | The kernel patch | `git apply --check` against a fresh sparse clone of the real upstream file (also re-run on every GitHub Actions run) | applies cleanly |
 | Kconfig symbol names in the config fragment | `grep`'d against the real `Kconfig` files, not guessed | one guess (`SND_SOC_SIMPLE_CARD`) was wrong; corrected to the real `SND_SIMPLE_CARD` |
 | `patch-stack`'s drift detection | real sparse clones of 5 real upstream kernel tags (`v5.15`–`v6.17`), real `git apply --check` of both carried patches against each | a genuine finding: 1/5 tags healthy -- patch 0002 breaks from v6.1 onward because upstream really refactored that error path |
+| DRIFT triage category + rebase hint | `triage-tool` classifies real `git apply` failures from `patch-stack`; `rebase_hint()` searches the real v6.1 file for the patch's own context lines | shared `[triage-tool: patch_stack_drift]` suggestion on real output; honestly reports "context not found" for v6.1 (the block was rewritten, not moved) -- an earlier line-number-based version was caught printing the *wrong* block and was fixed, see `docs/validation-notes.md` |
 | `bitbake_triage.py` | real `pytest` suite built from this project's own actual build failures (locale/as-root sanity errors, a `FILESEXTRAPATHS` lookup miss) plus textbook failure shapes | 9/9 passing; caught 2 real bugs in the tool itself along the way |
 | `.gitlab-ci.yml` | run for real with `gitlab-ci-local` against real Docker containers | lint/test jobs passed; see notes for a real TLS/proxy issue hit and fixed |
 | JFrog Artifactory integration | real local Artifactory OSS + Postgres containers; real upload/download round trip | byte-identical round trip, with Artifactory's own server-computed checksums |
+| Artifactory as an `sstate-cache` mirror | real `SSTATE_MIRRORS` directive; local cache + `tmp` wiped, rebuilt via real HTTP GETs against the mirror | 277/278 tasks restored from the mirror in 1m04s vs 1m13s warm-local -- see `artifactory/README.md` |
 | `.github/workflows/ci.yml` | pushed and run on GitHub Actions | all 4 jobs green |
 
 ## What wasn't attempted, and why

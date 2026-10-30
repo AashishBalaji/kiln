@@ -268,3 +268,113 @@ It does not attempt a 3-way merge or automatic rebase (`git apply
 merge base, which these hand-written patches don't carry) — it tells
 you *that* a patch broke and exactly *where*, not how to fix it
 automatically. That's a natural next step, not a gap hidden here.
+
+### DRIFT triage category: `warden` and `triage-tool` now share one vocabulary
+
+Before this, `warden`'s "broken" status and `triage-tool`'s findings
+were two unrelated ways of saying "something went wrong" — a real
+`git apply --check` failure never got a triage suggestion, it was
+just raw stderr. `triage-tool/bitbake_triage.py` gained a new
+`Category.DRIFT` (`"patch_stack_drift"`) and a rule matching `git
+apply`'s own real failure format (`error: patch failed: <file>:<n>`
+/ `error: <file>: patch does not apply`) — distinct from bitbake's
+own `do_patch`/quilt-style failure text, which never phrases it this
+way. `patch-stack/warden/triage_bridge.py` imports the real
+`bitbake_triage.classify` from the sibling `triage-tool/` directory
+(found relative to the importing file, so it works regardless of
+where in the repo checkout `warden` is run from) and runs it on the
+real `PatchResult.detail` text. Proven for real: running
+`python3 -m warden.cli matrix --tags v6.1` now prints
+
+```
+[triage-tool: patch_stack_drift]
+-> a carried patch no longer applies against this source tree -- ...
+```
+
+attached to the genuine v6.1 drift finding above, not a synthetic
+example. `triage-tool`'s own test suite grew a matching test using
+the exact real error text patch-stack produced (9 → 10 tests, all
+passing); `patch-stack`'s own suite grew a test that the bridge
+classifies that real text correctly (skipped gracefully if
+`triage-tool/` isn't found next to the checkout, rather than
+failing).
+
+A second, unrelated real bug was caught while building this: `warden
+matrix --tags v6.1 --json` worked, but `warden --json matrix --tags
+v6.1` silently reset `--json` back to `False` instead of honoring it
+or erroring — a parent `argparse.ArgumentParser` and one of its
+subparsers both defined `--json` with the same `dest`, so they share
+one slot in the parsed `Namespace`, and the subparser's own default
+re-applied itself after the parent had already set it. Found by
+actually running both orderings, not by reading the argparse docs.
+Fixed by defining `--series`/`--json` only once, on each subparser
+(see the `_add_common_args` helper and its comment in
+`warden/cli.py`); the wrong ordering now raises a loud argparse error
+instead of silently doing the wrong thing. Covered by
+`test_cli_json_flag_after_subcommand_is_honored`.
+
+### Rebase hint: showing the real upstream file's current content at the break — and a real bug this caught in itself
+
+Once `warden` knows a patch broke, the natural next question is
+"what does that part of the file actually look like now?" so a human
+doesn't have to open the real file themselves to start a manual
+rebase. The first implementation took the line number named in `git
+apply`'s own error text (e.g. `patch failed:
+sound/soc/codecs/tlv320aic31xx.c:1661`) and printed the real file's
+lines around that number.
+
+Running it for real against v6.1 caught a genuine bug in that
+approach before it shipped: the printed "hint" showed lines
+1657–1665, which is the `devm_regmap_init_i2c`/`IS_ERR` regmap-init
+block — not the regulator-supply `if (ret) { if (ret !=
+-EPROBE_DEFER) ... }` block patch 0002 actually touches. The line
+number `git apply` names is the hunk's position in the *old* file
+the patch was written against (from the patch's own `@@
+-1661,6 +1661,8 @@` header); once anything earlier in the same
+function gains or loses lines between versions, that number stops
+pointing at the right place in the *new* file being checked — and it
+did, between v5.15 and v6.1. A line-number-based hint is therefore
+not just imprecise but actively misleading, and would have shipped
+looking like it worked (it printed real, valid source — just the
+wrong block).
+
+Fixed by making `rebase_hint()` search the real target file for the
+patch's own pre-image (its context + removed lines — the text the
+hunk expects to already be there) instead of trusting any line
+number. Two real, honestly-distinguished outcomes:
+
+- **Found verbatim, once:** the surrounding code moved but this
+  block didn't change — show the real current lines around where it
+  actually sits now, confirmed with a local-repo test
+  (`test_rebase_hint_finds_real_context_that_still_exists`).
+- **Not found anywhere:** the block itself was rewritten, not just
+  relocated — say so plainly rather than guess
+  (`test_rebase_hint_reports_honestly_when_context_is_gone`).
+
+Independently confirmed against the real v6.1 kernel source (not
+just inferred from the tool's own output): a direct clone and grep
+of `sound/soc/codecs/tlv320aic31xx.c` at `v6.1` shows the old
+`if (ret) { if (ret != -EPROBE_DEFER) dev_err(...); return ret; }`
+block is gone, replaced by `return dev_err_probe(...)` — so "none of
+the patch's expected context lines were found" is the honest and
+correct answer for this real case, not a tool failure. Covered by
+`test_real_upstream_v6_1_rebase_hint_matches_actual_rewrite`
+(network, `@pytest.mark.integration`), which runs the real
+`rebase_hint()` against a real fresh clone of that tag.
+
+Re-run for real end-to-end after the fix:
+`python3 -m warden.cli matrix --tags v5.15,v6.1` — v5.15 still
+healthy, v6.1 still drifted, and the hint under the v6.1 finding now
+reads "none of the patch's expected context lines were found
+verbatim..." instead of printing the unrelated regmap-init block.
+Also re-verified inside the real `drift-check` GitLab CI job via
+`gitlab-ci-local` in Docker, across all 5 real tags (1/5 healthy,
+same result as the local shell run). Lint clean
+(`flake8 --max-line-length=100 warden/ tests/`); full local suite
+10/10 passing (7 local + 3 real-network integration tests).
+
+This is still deliberately not a 3-way merge: it only tells you
+whether the patch's own expectation of the file still holds, in
+plain terms, using real text search rather than a borrowed line
+number — a stronger, honestly-scoped version of the same "tell you
+where, not fix it automatically" idea as the drift check itself.
