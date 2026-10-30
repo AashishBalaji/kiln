@@ -4,3 +4,6 @@ kernel-patch/linux-sparse/
 __pycache__/
 .pytest_cache/
 tmp/
+artifactory/var/
+kernel-patch/linux-sparse/
+*.tar.gz

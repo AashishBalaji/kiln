@@ -117,3 +117,47 @@ build above — it just uses the host toolchain directly, since that is
 the fastest real way to prove the C source and its cJSON usage are
 correct, independent of whether a full Yocto target build can complete
 in this sandbox.
+
+## Real GitLab CI verification via `gitlab-ci-local`
+
+Per explicit choice (no GitLab.com project for this one -- verify the
+pipeline locally against real `.gitlab-ci.yml` semantics instead), the
+pipeline was run for real with `gitlab-ci-local` (npm package, uses
+Docker to actually execute each job exactly as GitLab Runner would).
+
+**What ran, and passed, for real, inside real Docker containers
+(`python:3.12-slim`):**
+- `lint-recipes` -- the real `ci/check_recipes.py` structural check
+  against the real `meta-infotainment` layer: passed.
+- `lint-triage-tool` -- real `flake8` run against the real triage tool
+  source: passed (after a real fix, see below).
+- `test-triage-tool` -- the real 9-test `pytest` suite from the triage
+  tool, run inside the container: all 9 passed.
+
+**A real environment issue hit and fixed along the way**: `pip install`
+inside the container initially failed with a TLS error
+(`certificate verify failed: self-signed certificate in certificate
+chain`) -- this sandbox's own outbound-HTTPS path runs through a local
+agent-proxy on the host's loopback, which a Docker container's default
+network cannot reach. Fixed for the verification run by passing
+`--network host` (so the container's `127.0.0.1` resolves to the
+sandbox host, where the proxy actually listens) and the same
+`HTTPS_PROXY`/`HTTP_PROXY` values this shell already uses, as
+`gitlab-ci-local --variable` flags. This is a property of this one
+sandbox's network setup, not of the pipeline definition -- a real
+GitLab Runner has no such proxy in the way, so `.gitlab-ci.yml` itself
+is left as the plain, portable job definition; the extra `--network`/
+`--variable` flags are a verification-time detail of this sandbox,
+recorded here rather than baked into the committed pipeline.
+
+**The `yocto-parse` and `yocto-build-cjson-native` jobs were not run**
+through `gitlab-ci-local` (they are `when: manual`, stated in
+`.gitlab-ci.yml` itself): running them would mean cloning Poky and
+rebuilding the native toolchain bootstrap a second time inside a fresh
+container, on top of the ~16GB this sandbox's disk has already spent
+proving those exact same steps once, directly, earlier in this project.
+Their script bodies are the identical command sequences already run
+directly and verified (`bitbake -p`; `bitbake cjson-native`) -- they are
+real, correct job definitions, not placeholders, but re-executing them
+through Docker a second time in this disk-constrained sandbox was not
+attempted, for the same disk-budget reason documented above.

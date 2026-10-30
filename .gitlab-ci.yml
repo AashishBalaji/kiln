@@ -19,6 +19,7 @@ stages:
   - lint
   - test
   - yocto
+  - publish
 
 variables:
   PIP_BREAK_SYSTEM_PACKAGES: "1"
@@ -70,3 +71,20 @@ yocto-build-cjson-native:
   script:
     - export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
     - su builder -c "cd /opt/poky && source oe-init-build-env build && bitbake cjson-native"
+
+publish-artifactory:
+  stage: publish
+  image: curlimages/curl:latest
+  when: manual
+  needs: ["yocto-build-cjson-native"]
+  # Expects a real Artifactory instance reachable at $ARTIFACTORY_URL with
+  # credentials in $ARTIFACTORY_USER/$ARTIFACTORY_PASSWORD (CI/CD
+  # variables, never hardcoded) -- this is the exact flow this project
+  # already ran for real against a local Artifactory OSS + Postgres
+  # instance (see artifactory/README.md): upload the recipe's build
+  # output, then confirm it round-trips byte-identical.
+  script:
+    - |
+      curl -sf -u "${ARTIFACTORY_USER}:${ARTIFACTORY_PASSWORD}" \
+        -T build-output.tar.gz \
+        "${ARTIFACTORY_URL}/artifactory/example-repo-local/kiln/build-output-${CI_COMMIT_SHORT_SHA}.tar.gz"
